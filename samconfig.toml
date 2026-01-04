@@ -1,0 +1,40 @@
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "questrade-lunchmoney-sync"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+region = "us-east-1"
+parameter_overrides = [
+    # Override these values or set them during deployment
+    # "QuestradeRefreshToken=your_token_here",
+    # "LunchMoneyApiToken=your_token_here",
+    # "QuestradeAccountIds=123456,789012",
+    # "SyncDaysBack=31",
+    # "LunchMoneyAssetId=",
+    # "SyncSchedule=cron(0 8 * * ? *)",
+    # "LogRetentionDays=30"
+]
+
+[default.package.parameters]
+resolve_s3 = true
+
+[default.sync.parameters]
+watch = true
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
+
+[default.local_start_lambda.parameters]
+warm_containers = "EAGER"

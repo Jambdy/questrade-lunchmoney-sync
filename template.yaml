@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  questrade-lunchmoney-sync
+
+  Serverless application to sync Questrade investment transactions to Lunch Money
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: questrade-lunchmoney-sync
+    Description: Automated synchronization of investment transactions from Questrade to Lunch Money
+    Author: Your Name
+    SpdxLicenseId: MIT
+    LicenseUrl: LICENSE
+    ReadmeUrl: README.md
+    Labels: ['questrade', 'lunchmoney', 'finance', 'sync']
+    HomePageUrl: https://github.com/yourusername/questrade-lunchmoney-sync
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://github.com/yourusername/questrade-lunchmoney-sync
+
+Parameters:
+  QuestradeRefreshToken:
+    Type: String
+    Description: Questrade OAuth refresh token
+    NoEcho: true
+
+  LunchMoneyApiToken:
+    Type: String
+    Description: Lunch Money API access token
+    NoEcho: true
+
+  QuestradeAccountIds:
+    Type: String
+    Description: Comma-separated list of Questrade account IDs to sync
+    Default: ""
+
+  SyncDaysBack:
+    Type: Number
+    Description: Number of days to look back when syncing (max 31)
+    Default: 31
+    MinValue: 1
+    MaxValue: 31
+
+  LunchMoneyAssetId:
+    Type: String
+    Description: Optional Lunch Money asset ID to associate transactions with
+    Default: ""
+
+  SyncSchedule:
+    Type: String
+    Description: CloudWatch Events schedule expression (cron or rate)
+    Default: "cron(0 8 * * ? *)"
+    # Default: Daily at 8 AM UTC
+
+  LogRetentionDays:
+    Type: Number
+    Description: Number of days to retain CloudWatch logs
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+
+Globals:
+  Function:
+    Timeout: 300
+    MemorySize: 256
+    Runtime: python3.11
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        QUESTRADE_REFRESH_TOKEN: !Ref QuestradeRefreshToken
+        LUNCHMONEY_API_TOKEN: !Ref LunchMoneyApiToken
+        QUESTRADE_ACCOUNT_IDS: !Ref QuestradeAccountIds
+        SYNC_DAYS_BACK: !Ref SyncDaysBack
+        LUNCHMONEY_ASSET_ID: !Ref LunchMoneyAssetId
+
+Resources:
+  SyncFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: questrade-lunchmoney-sync
+      CodeUri: .
+      Handler: src.lambda_handler.handler
+      Description: Syncs Questrade investment transactions to Lunch Money
+      Events:
+        ScheduledSync:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref SyncSchedule
+            Name: questrade-lunchmoney-sync-schedule
+            Description: Trigger sync on a schedule
+            Enabled: true
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !GetAtt SyncFunctionLogGroup.Arn
+      Tags:
+        Application: questrade-lunchmoney-sync
+        Environment: production
+
+  SyncFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${SyncFunction}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # Optional: SNS Topic for error notifications
+  ErrorNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: questrade-lunchmoney-sync-errors
+      DisplayName: Questrade-LunchMoney Sync Errors
+      Tags:
+        - Key: Application
+          Value: questrade-lunchmoney-sync
+
+  # Optional: CloudWatch Alarm for function errors
+  SyncFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: questrade-lunchmoney-sync-errors
+      AlarmDescription: Alert when sync function encounters errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SyncFunction
+      AlarmActions:
+        - !Ref ErrorNotificationTopic
+      TreatMissingData: notBreaching
+
+  # Optional: CloudWatch Alarm for function duration
+  SyncFunctionDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: questrade-lunchmoney-sync-duration
+      AlarmDescription: Alert when sync function takes too long
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 240000  # 4 minutes (function timeout is 5 minutes)
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SyncFunction
+      AlarmActions:
+        - !Ref ErrorNotificationTopic
+      TreatMissingData: notBreaching
+
+Outputs:
+  SyncFunction:
+    Description: Sync Lambda Function ARN
+    Value: !GetAtt SyncFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-SyncFunctionArn'
+
+  SyncFunctionIamRole:
+    Description: Implicit IAM Role created for Sync function
+    Value: !GetAtt SyncFunctionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-SyncFunctionRoleArn'
+
+  SyncSchedule:
+    Description: CloudWatch Events Rule for scheduled sync
+    Value: !Ref SyncSchedule
+    Export:
+      Name: !Sub '${AWS::StackName}-SyncSchedule'
+
+  ErrorNotificationTopicArn:
+    Description: SNS Topic ARN for error notifications
+    Value: !Ref ErrorNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-ErrorNotificationTopicArn'
+
+  LogGroupName:
+    Description: CloudWatch Log Group Name
+    Value: !Ref SyncFunctionLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LogGroupName'

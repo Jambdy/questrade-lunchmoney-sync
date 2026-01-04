@@ -1,0 +1,154 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: questrade-lunchmoney-sync
+
+permissions:
+  contents: read
+  id-token: write  # Required for AWS OIDC
+
+jobs:
+  deploy:
+    name: Deploy SAM Application
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pip install pytest pytest-cov
+          python -m pytest tests/ -v --cov=src --cov-report=term-missing
+
+      - name: Set up AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Option 1: Use OIDC (recommended for security - no long-lived credentials)
+          # Requires setting up OIDC provider in AWS
+          # role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+          # Option 2: Use IAM access keys (simpler setup)
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate SAM template
+        run: sam validate --lint
+
+      - name: Build SAM application
+        run: sam build --use-container
+
+      - name: Deploy SAM application
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --capabilities CAPABILITY_IAM \
+            --resolve-s3 \
+            --parameter-overrides \
+              QuestradeRefreshToken="${{ secrets.QUESTRADE_REFRESH_TOKEN }}" \
+              LunchMoneyApiToken="${{ secrets.LUNCHMONEY_API_TOKEN }}" \
+              QuestradeAccountIds="${{ secrets.QUESTRADE_ACCOUNT_IDS }}" \
+              SyncDaysBack="${{ vars.SYNC_DAYS_BACK || '31' }}" \
+              LunchMoneyAssetId="${{ vars.LUNCHMONEY_ASSET_ID || '' }}" \
+              SyncSchedule="${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}" \
+              LogRetentionDays="${{ vars.LOG_RETENTION_DAYS || '30' }}"
+
+      - name: Get stack outputs
+        id: stack-outputs
+        run: |
+          FUNCTION_ARN=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`SyncFunction`].OutputValue' \
+            --output text)
+
+          SNS_TOPIC=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ErrorNotificationTopicArn`].OutputValue' \
+            --output text)
+
+          echo "function_arn=${FUNCTION_ARN}" >> $GITHUB_OUTPUT
+          echo "sns_topic=${SNS_TOPIC}" >> $GITHUB_OUTPUT
+
+      - name: Test Lambda function (optional smoke test)
+        if: github.event.inputs.environment == 'staging' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Testing Lambda function..."
+          aws lambda invoke \
+            --function-name questrade-lunchmoney-sync \
+            --region ${{ env.AWS_REGION }} \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{}' \
+            /tmp/response.json
+
+          cat /tmp/response.json
+
+          # Check if invocation was successful
+          if grep -q '"statusCode": 200' /tmp/response.json; then
+            echo "✅ Lambda test passed"
+          else
+            echo "❌ Lambda test failed"
+            exit 1
+          fi
+
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Summary 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Stack Name**: ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Function ARN**: ${{ steps.stack-outputs.outputs.function_arn }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **SNS Topic**: ${{ steps.stack-outputs.outputs.sns_topic }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ github.event.inputs.environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- Sync Schedule: \`${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Sync Days Back: ${{ vars.SYNC_DAYS_BACK || '31' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Log Retention: ${{ vars.LOG_RETENTION_DAYS || '30' }} days" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed! Check the logs above for details."
+          echo "## Deployment Failed ❌" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The deployment to ${{ env.STACK_NAME }} failed. Please check the workflow logs." >> $GITHUB_STEP_SUMMARY
