@@ -53,7 +53,8 @@ Required IAM permissions:
         "logs:*",
         "events:*",
         "sns:*",
-        "cloudwatch:*"
+        "cloudwatch:*",
+        "secretsmanager:*"
       ],
       "Resource": "*"
     }
@@ -112,9 +113,11 @@ Add these as **Repository Secrets**:
 | `AWS_ACCESS_KEY_ID` | AWS IAM access key ID (if using Option A) | `AKIAIOSFODNN7EXAMPLE` |
 | `AWS_SECRET_ACCESS_KEY` | AWS IAM secret access key (if using Option A) | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
 | `AWS_ROLE_ARN` | AWS IAM role ARN (if using OIDC Option B) | `arn:aws:iam::123456789012:role/GitHubActionsRole` |
-| `QUESTRADE_REFRESH_TOKEN` | Questrade OAuth refresh token | `abc123xyz...` |
+| `QUESTRADE_REFRESH_TOKEN` | Questrade OAuth refresh token (initial only) ⚡ | `abc123xyz...` |
 | `LUNCHMONEY_API_TOKEN` | Lunch Money API access token | `lm_abc123...` |
 | `QUESTRADE_ACCOUNT_IDS` | Comma-separated Questrade account IDs | `12345678,87654321` |
+
+⚡ **Questrade Token Auto-Rotation**: The Questrade refresh token is only needed for the **initial deployment**. After that, it's automatically stored and rotated in AWS Secrets Manager. You'll never need to manually update it again! See [SECRETS_MANAGER.md](SECRETS_MANAGER.md) for details.
 
 **To add a secret:**
 1. Click "New repository secret"

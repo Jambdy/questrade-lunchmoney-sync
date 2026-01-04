@@ -73,6 +73,25 @@ jobs:
       - name: Build SAM application
         run: sam build --use-container
 
+      - name: Check and create Secrets Manager secret
+        id: check-secret
+        run: |
+          SECRET_NAME="${{ vars.QUESTRADE_SECRET_NAME || 'questrade-lunchmoney/questrade-token' }}"
+          echo "secret_name=${SECRET_NAME}" >> $GITHUB_OUTPUT
+
+          # Check if secret exists
+          if aws secretsmanager describe-secret --secret-id "${SECRET_NAME}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Secret ${SECRET_NAME} already exists"
+            echo "secret_exists=true" >> $GITHUB_OUTPUT
+            # Don't pass refresh token to SAM if secret exists
+            echo "pass_token=" >> $GITHUB_OUTPUT
+          else
+            echo "Secret ${SECRET_NAME} does not exist, will be created by CloudFormation"
+            echo "secret_exists=false" >> $GITHUB_OUTPUT
+            # Pass refresh token to SAM to create secret
+            echo "pass_token=${{ secrets.QUESTRADE_REFRESH_TOKEN }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Deploy SAM application
         run: |
           sam deploy \
@@ -83,13 +102,15 @@ jobs:
             --capabilities CAPABILITY_IAM \
             --resolve-s3 \
             --parameter-overrides \
-              QuestradeRefreshToken="${{ secrets.QUESTRADE_REFRESH_TOKEN }}" \
+              QuestradeRefreshToken="${{ steps.check-secret.outputs.pass_token }}" \
               LunchMoneyApiToken="${{ secrets.LUNCHMONEY_API_TOKEN }}" \
               QuestradeAccountIds="${{ secrets.QUESTRADE_ACCOUNT_IDS }}" \
               SyncDaysBack="${{ vars.SYNC_DAYS_BACK || '31' }}" \
               LunchMoneyAssetId="${{ vars.LUNCHMONEY_ASSET_ID || '' }}" \
               SyncSchedule="${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}" \
-              LogRetentionDays="${{ vars.LOG_RETENTION_DAYS || '30' }}"
+              LogRetentionDays="${{ vars.LOG_RETENTION_DAYS || '30' }}" \
+              QuestradeSecretName="${{ steps.check-secret.outputs.secret_name }}" \
+              UseSecretsManager="${{ vars.USE_SECRETS_MANAGER || 'true' }}"
 
       - name: Get stack outputs
         id: stack-outputs
@@ -144,6 +165,12 @@ jobs:
           echo "- Sync Schedule: \`${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Sync Days Back: ${{ vars.SYNC_DAYS_BACK || '31' }}" >> $GITHUB_STEP_SUMMARY
           echo "- Log Retention: ${{ vars.LOG_RETENTION_DAYS || '30' }} days" >> $GITHUB_STEP_SUMMARY
+          echo "- Using Secrets Manager: ${{ vars.USE_SECRETS_MANAGER || 'true' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Secret Name: \`${{ steps.check-secret.outputs.secret_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Token Management" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Questrade refresh token will auto-update in Secrets Manager on each run" >> $GITHUB_STEP_SUMMARY
+          echo "✅ No manual token rotation required" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
         if: failure()

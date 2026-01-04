@@ -1,6 +1,9 @@
 import os
 import logging
-from typing import Dict, Any
+import json
+from typing import Dict, Any, Optional
+import boto3
+from botocore.exceptions import ClientError
 from .questrade import QuestradeClient
 from .lunchmoney import LunchMoneyClient
 from .sync import TransactionSync
@@ -9,13 +12,86 @@ from .sync import TransactionSync
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Initialize AWS clients
+secrets_client = boto3.client('secretsmanager')
+
+
+def get_secret(secret_name: str) -> Optional[str]:
+    """
+    Retrieve a secret from AWS Secrets Manager.
+
+    Args:
+        secret_name: Name of the secret to retrieve
+
+    Returns:
+        Secret value as string, or None if not found
+    """
+    try:
+        response = secrets_client.get_secret_value(SecretId=secret_name)
+
+        # Secrets can be stored as string or binary
+        if 'SecretString' in response:
+            return response['SecretString']
+        else:
+            # Binary secrets (base64 encoded)
+            import base64
+            return base64.b64decode(response['SecretBinary']).decode('utf-8')
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'ResourceNotFoundException':
+            logger.warning(f"Secret {secret_name} not found in Secrets Manager")
+        elif error_code == 'AccessDeniedException':
+            logger.error(f"Access denied to secret {secret_name}")
+        else:
+            logger.error(f"Error retrieving secret {secret_name}: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving secret {secret_name}: {str(e)}")
+        return None
+
+
+def update_secret(secret_name: str, secret_value: str) -> bool:
+    """
+    Update a secret in AWS Secrets Manager.
+
+    Args:
+        secret_name: Name of the secret to update
+        secret_value: New value for the secret
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        secrets_client.put_secret_value(
+            SecretId=secret_name,
+            SecretString=secret_value
+        )
+        logger.info(f"Successfully updated secret {secret_name}")
+        return True
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'ResourceNotFoundException':
+            logger.error(f"Secret {secret_name} not found. Cannot update.")
+        elif error_code == 'AccessDeniedException':
+            logger.error(f"Access denied to update secret {secret_name}")
+        else:
+            logger.error(f"Error updating secret {secret_name}: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error updating secret {secret_name}: {str(e)}")
+        return False
+
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     AWS Lambda handler function for syncing Questrade to Lunch Money.
 
     Environment Variables Required:
-        QUESTRADE_REFRESH_TOKEN: Questrade OAuth refresh token
+        QUESTRADE_SECRET_NAME: Name of Secrets Manager secret for Questrade token (optional)
+        USE_SECRETS_MANAGER: Whether to use Secrets Manager (default: 'true')
+        QUESTRADE_REFRESH_TOKEN: Questrade OAuth refresh token (fallback if Secrets Manager not used)
         LUNCHMONEY_API_TOKEN: Lunch Money API access token
         QUESTRADE_ACCOUNT_IDS: Comma-separated list of Questrade account IDs
         SYNC_DAYS_BACK: Number of days to sync (default: 31, max: 31)
@@ -30,15 +106,27 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     try:
         # Get configuration from environment variables
-        questrade_refresh_token = os.environ.get('QUESTRADE_REFRESH_TOKEN')
+        use_secrets_manager = os.environ.get('USE_SECRETS_MANAGER', 'true').lower() == 'true'
+        secret_name = os.environ.get('QUESTRADE_SECRET_NAME', 'questrade-lunchmoney/questrade-token')
         lunchmoney_api_token = os.environ.get('LUNCHMONEY_API_TOKEN')
         account_ids_str = os.environ.get('QUESTRADE_ACCOUNT_IDS', '')
         days_back = int(os.environ.get('SYNC_DAYS_BACK', '31'))
         asset_id_str = os.environ.get('LUNCHMONEY_ASSET_ID')
 
-        # Validate required environment variables
+        # Get Questrade refresh token from Secrets Manager or environment variable
+        questrade_refresh_token = None
+        if use_secrets_manager:
+            logger.info(f"Retrieving Questrade refresh token from Secrets Manager: {secret_name}")
+            questrade_refresh_token = get_secret(secret_name)
+
+        # Fallback to environment variable if Secrets Manager not used or failed
         if not questrade_refresh_token:
-            raise ValueError("QUESTRADE_REFRESH_TOKEN environment variable is required")
+            logger.info("Falling back to environment variable for Questrade refresh token")
+            questrade_refresh_token = os.environ.get('QUESTRADE_REFRESH_TOKEN')
+
+        # Validate required configuration
+        if not questrade_refresh_token:
+            raise ValueError("QUESTRADE_REFRESH_TOKEN not found in Secrets Manager or environment variables")
         if not lunchmoney_api_token:
             raise ValueError("LUNCHMONEY_API_TOKEN environment variable is required")
         if not account_ids_str:
@@ -83,12 +171,25 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # Update refresh token if it changed
         new_refresh_token = questrade_client.get_current_refresh_token()
+        token_updated = False
         if new_refresh_token != questrade_refresh_token:
-            logger.warning(
-                "Questrade refresh token has been updated. "
-                "Please update your QUESTRADE_REFRESH_TOKEN environment variable with: "
-                f"{new_refresh_token}"
-            )
+            logger.info("Questrade refresh token has been updated")
+
+            # Automatically update Secrets Manager if enabled
+            if use_secrets_manager:
+                logger.info(f"Updating Secrets Manager secret: {secret_name}")
+                token_updated = update_secret(secret_name, new_refresh_token)
+                if token_updated:
+                    logger.info("✅ Successfully updated Questrade refresh token in Secrets Manager")
+                else:
+                    logger.error("❌ Failed to update Questrade refresh token in Secrets Manager")
+                    logger.warning(f"Manual update required. New token: {new_refresh_token[:10]}...")
+            else:
+                logger.warning(
+                    "Secrets Manager not enabled. "
+                    "Please manually update your QUESTRADE_REFRESH_TOKEN environment variable with: "
+                    f"{new_refresh_token}"
+                )
 
         return {
             'statusCode': 200,
@@ -105,7 +206,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'new_transactions': total_new,
                     'skipped_duplicates': total_skipped
                 },
-                'new_refresh_token': new_refresh_token if new_refresh_token != questrade_refresh_token else None
+                'token_rotated': new_refresh_token != questrade_refresh_token,
+                'token_auto_updated': token_updated,
+                'using_secrets_manager': use_secrets_manager
             }
         }
 
