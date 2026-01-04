@@ -19,9 +19,9 @@ Metadata:
     SourceCodeUrl: https://github.com/yourusername/questrade-lunchmoney-sync
 
 Parameters:
-  QuestradeRefreshToken:
+  QuestradeRefreshTokens:
     Type: String
-    Description: Questrade OAuth refresh token (optional if using existing secret)
+    Description: JSON object with Questrade OAuth refresh tokens (optional if using existing secret)
     NoEcho: true
     Default: ""
 
@@ -30,9 +30,9 @@ Parameters:
     Description: Lunch Money API access token
     NoEcho: true
 
-  QuestradeAccountIds:
+  QuestradeAccounts:
     Type: String
-    Description: Comma-separated list of Questrade account IDs to sync
+    Description: JSON object mapping account labels to account IDs and token keys
     Default: ""
 
   SyncDaysBack:
@@ -61,8 +61,8 @@ Parameters:
 
   QuestradeSecretName:
     Type: String
-    Description: Name for the Secrets Manager secret storing Questrade token
-    Default: "questrade-lunchmoney/questrade-token"
+    Description: Name for the Secrets Manager secret storing Questrade tokens
+    Default: "questrade-lunchmoney/questrade-tokens"
 
   UseSecretsManager:
     Type: String
@@ -71,7 +71,7 @@ Parameters:
     AllowedValues: ["true", "false"]
 
 Conditions:
-  CreateSecret: !Not [!Equals [!Ref QuestradeRefreshToken, ""]]
+  CreateSecret: !Not [!Equals [!Ref QuestradeRefreshTokens, ""]]
 
 Globals:
   Function:
@@ -83,21 +83,21 @@ Globals:
     Environment:
       Variables:
         LUNCHMONEY_API_TOKEN: !Ref LunchMoneyApiToken
-        QUESTRADE_ACCOUNT_IDS: !Ref QuestradeAccountIds
+        QUESTRADE_ACCOUNTS: !Ref QuestradeAccounts
         SYNC_DAYS_BACK: !Ref SyncDaysBack
         LUNCHMONEY_ASSET_ID: !Ref LunchMoneyAssetId
         QUESTRADE_SECRET_NAME: !Ref QuestradeSecretName
         USE_SECRETS_MANAGER: !Ref UseSecretsManager
 
 Resources:
-  # Secrets Manager secret for Questrade refresh token
+  # Secrets Manager secret for Questrade refresh tokens (JSON object)
   QuestradeTokenSecret:
     Type: AWS::SecretsManager::Secret
     Condition: CreateSecret
     Properties:
       Name: !Ref QuestradeSecretName
-      Description: Questrade OAuth refresh token (auto-rotates with each API call)
-      SecretString: !Ref QuestradeRefreshToken
+      Description: Questrade OAuth refresh tokens (JSON, auto-rotates with each API call)
+      SecretString: !Ref QuestradeRefreshTokens
       Tags:
         - Key: Application
           Value: questrade-lunchmoney-sync

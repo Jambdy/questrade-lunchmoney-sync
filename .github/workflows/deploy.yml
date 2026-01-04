@@ -76,24 +76,41 @@ jobs:
       - name: Check and create Secrets Manager secret
         id: check-secret
         run: |
-          SECRET_NAME="${{ vars.QUESTRADE_SECRET_NAME || 'questrade-lunchmoney/questrade-token' }}"
+          SECRET_NAME="${{ vars.QUESTRADE_SECRET_NAME || 'questrade-lunchmoney/questrade-tokens' }}"
           echo "secret_name=${SECRET_NAME}" >> $GITHUB_OUTPUT
+
+          # Build JSON tokens object from individual secrets
+          # Format: {"primary": "token1", "spouse": "token2"}
+          TOKENS_JSON=$(jq -n \
+            --arg primary "${{ secrets.QUESTRADE_REFRESH_TOKEN_PRIMARY }}" \
+            --arg spouse "${{ secrets.QUESTRADE_REFRESH_TOKEN_SPOUSE }}" \
+            '{primary: $primary, spouse: $spouse}')
 
           # Check if secret exists
           if aws secretsmanager describe-secret --secret-id "${SECRET_NAME}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
             echo "Secret ${SECRET_NAME} already exists"
             echo "secret_exists=true" >> $GITHUB_OUTPUT
-            # Don't pass refresh token to SAM if secret exists
-            echo "pass_token=" >> $GITHUB_OUTPUT
+            # Don't pass refresh tokens to SAM if secret exists
+            echo "pass_tokens=" >> $GITHUB_OUTPUT
           else
             echo "Secret ${SECRET_NAME} does not exist, will be created by CloudFormation"
             echo "secret_exists=false" >> $GITHUB_OUTPUT
-            # Pass refresh token to SAM to create secret
-            echo "pass_token=${{ secrets.QUESTRADE_REFRESH_TOKEN }}" >> $GITHUB_OUTPUT
+            # Pass refresh tokens JSON to SAM to create secret
+            echo "pass_tokens=${TOKENS_JSON}" >> $GITHUB_OUTPUT
           fi
 
       - name: Deploy SAM application
         run: |
+          # Build QUESTRADE_ACCOUNTS JSON
+          # Format: {"primary": {"account_ids": ["123"], "token_key": "primary"}, "spouse": {"account_ids": ["456"], "token_key": "spouse"}}
+          ACCOUNTS_JSON=$(jq -n \
+            --arg primary_ids "${{ secrets.QUESTRADE_ACCOUNT_IDS_PRIMARY }}" \
+            --arg spouse_ids "${{ secrets.QUESTRADE_ACCOUNT_IDS_SPOUSE }}" \
+            '{
+              primary: {account_ids: ($primary_ids | split(",")), token_key: "primary"},
+              spouse: {account_ids: ($spouse_ids | split(",")), token_key: "spouse"}
+            }')
+
           sam deploy \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
@@ -102,9 +119,9 @@ jobs:
             --capabilities CAPABILITY_IAM \
             --resolve-s3 \
             --parameter-overrides \
-              QuestradeRefreshToken="${{ steps.check-secret.outputs.pass_token }}" \
+              QuestradeRefreshTokens="${{ steps.check-secret.outputs.pass_tokens }}" \
               LunchMoneyApiToken="${{ secrets.LUNCHMONEY_API_TOKEN }}" \
-              QuestradeAccountIds="${{ secrets.QUESTRADE_ACCOUNT_IDS }}" \
+              QuestradeAccounts="${ACCOUNTS_JSON}" \
               SyncDaysBack="${{ vars.SYNC_DAYS_BACK || '31' }}" \
               LunchMoneyAssetId="${{ vars.LUNCHMONEY_ASSET_ID || '' }}" \
               SyncSchedule="${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}" \
