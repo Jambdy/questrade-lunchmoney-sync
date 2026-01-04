@@ -1,144 +1,209 @@
 # Multiple Questrade Accounts Setup
 
-This guide explains how to sync multiple Questrade accounts (e.g., yours and your spouse's) to Lunch Money.
+This guide explains how to sync multiple Questrade accounts to Lunch Money using a simple, flexible configuration.
 
 ## Why Multiple Accounts?
 
-Each Questrade login requires its own OAuth refresh token. If you have:
-- Your personal Questrade account
-- Your spouse's Questrade account
+Each Questrade login requires its own OAuth refresh token. You might have:
+- Multiple personal accounts (TFSA, RRSP, etc.)
+- Accounts for different family members
+- Any combination of investment accounts
 
-You need separate tokens for each since they authenticate different users.
+## Simplified Configuration
 
-## Configuration Format
+The setup is extremely simple: one GitHub secret with a comma-separated list of account IDs and tokens.
 
-### GitHub Secrets (Recommended)
+### GitHub Secret (Initial Setup Only)
 
-Set up these secrets in your GitHub repository:
+Set up this secret in your GitHub repository (Settings → Secrets and variables → Actions):
 
-#### Tokens
-| Secret Name | Description | Example |
-|------------|-------------|---------|
-| `QUESTRADE_REFRESH_TOKEN_PRIMARY` | Your Questrade refresh token | `xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0` |
-| `QUESTRADE_REFRESH_TOKEN_SPOUSE` | Spouse's Questrade refresh token | `yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1` |
+**Secret Name:** `QUESTRADE_TOKENS`
 
-#### Account IDs
-| Secret Name | Description | Example |
-|------------|-------------|---------|
-| `QUESTRADE_ACCOUNT_IDS_PRIMARY` | Your account IDs (comma-separated) | `12345678,12345679` |
-| `QUESTRADE_ACCOUNT_IDS_SPOUSE` | Spouse's account IDs (comma-separated) | `87654321` |
+**Format:** `accountId:token,accountId:token,accountId:token,...`
 
-The workflow will automatically build the configuration JSON from these secrets.
+**Example:**
+```
+QUESTRADE_TOKENS=12345678:xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0,12345679:xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0,87654321:yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1
+```
 
-### Environment Variables (Local/Manual)
+In this example:
+- Account `12345678` and `12345679` share the same token (both under the same Questrade login)
+- Account `87654321` uses a different token (different Questrade login)
 
-If deploying manually or testing locally, use these formats:
+### Secrets Manager (Runtime)
 
-#### QUESTRADE_ACCOUNTS
+After the first deployment, tokens are stored in AWS Secrets Manager:
+
+**Secret Name:** `questrade-lunchmoney/questrade-tokens`
+
+**Format (JSON):**
 ```json
 {
-  "primary": {
-    "account_ids": ["12345678", "12345679"],
-    "token_key": "primary"
-  },
-  "spouse": {
-    "account_ids": ["87654321"],
-    "token_key": "spouse"
-  }
+  "12345678": "refresh_token_for_account_12345678",
+  "12345679": "refresh_token_for_account_12345679",
+  "87654321": "refresh_token_for_account_87654321"
 }
 ```
 
-#### QUESTRADE_REFRESH_TOKEN (or Secrets Manager)
-```json
-{
-  "primary": "xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0",
-  "spouse": "yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1"
-}
-```
+- **Key:** Questrade account ID
+- **Value:** Refresh token for that account
+- Lambda extracts account IDs from the JSON keys automatically
+- Tokens are automatically updated after each sync
 
 ## How It Works
 
-1. **Initial Setup**:
-   - Primary account: Token stored as `primary` key
-   - Spouse account: Token stored as `spouse` key
+1. **Initial Setup:**
+   - You provide `QUESTRADE_TOKENS` as a GitHub secret
+   - GitHub Actions parses it and creates Secrets Manager secret
 
-2. **Each Lambda Run**:
-   - Reads both tokens from Secrets Manager
-   - Syncs primary account(s) with primary token
-   - Syncs spouse account(s) with spouse token
-   - Updates both tokens in Secrets Manager if they changed
+2. **Each Lambda Run:**
+   - Reads all tokens from Secrets Manager
+   - Extracts account IDs from the JSON keys
+   - Syncs each account with its corresponding token
+   - Updates tokens in Secrets Manager if they changed
 
-3. **Result**:
-   - Both accounts stay authenticated
-   - Tokens automatically rotate
+3. **Result:**
+   - All accounts stay authenticated
+   - Tokens automatically rotate (never expire)
    - All transactions appear in Lunch Money
 
-## Getting Your Tokens
+## Getting Your Configuration
 
-### Primary Account
+### Step 1: Get Account IDs
 
-1. Log into **your** Questrade account
-2. Go to Account Management → API Access
-3. Create app: "Lunch Money Sync - Primary"
-4. Generate refresh token
-5. Copy token immediately (shown only once)
-6. Save as `QUESTRADE_REFRESH_TOKEN_PRIMARY`
-
-### Spouse Account
-
-1. Log into **spouse's** Questrade account
-2. Go to Account Management → API Access
-3. Create app: "Lunch Money Sync - Spouse"
-4. Generate refresh token
-5. Copy token immediately
-6. Save as `QUESTRADE_REFRESH_TOKEN_SPOUSE`
-
-## Getting Account IDs
-
-### Option 1: Via Questrade Website
+#### Option A: Via Questrade Website
 1. Log into Questrade
 2. View your accounts
 3. Account number is displayed (usually 8 digits)
+4. Note down all account IDs you want to sync
 
-### Option 2: Via API (Advanced)
+#### Option B: Via API (Advanced)
 ```bash
 # Use your refresh token to get account IDs
 curl "https://login.questrade.com/oauth2/token?grant_type=refresh_token&refresh_token=YOUR_TOKEN"
+
 # Use the api_server and access_token from response
 curl "API_SERVER/v1/accounts" -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 
-## Example GitHub Secrets Setup
+### Step 2: Get Refresh Tokens
 
-For a couple with accounts:
-- Primary: 2 TFSA accounts (12345678, 12345679)
-- Spouse: 1 RRSP account (87654321)
+For each unique Questrade login (not each account):
+
+1. Log into that Questrade account
+2. Go to Account Management → API Access
+3. Create app: "Lunch Money Sync"
+4. Generate refresh token
+5. Copy token immediately (shown only once)
+
+**Important:** If multiple accounts are under the same Questrade login, they share the same token!
+
+### Step 3: Build QUESTRADE_TOKENS
+
+Format: `accountId1:token1,accountId2:token2,...`
+
+**Example 1: Single Login, Multiple Accounts**
+```
+QUESTRADE_TOKENS=12345678:xazTpGC...,12345679:xazTpGC...
+```
+(Same token for both accounts under one login)
+
+**Example 2: Multiple Logins**
+```
+QUESTRADE_TOKENS=12345678:xazTpGC...,87654321:yBDuQHD...
+```
+(Different tokens for different logins)
+
+**Example 3: Mix of Both**
+```
+QUESTRADE_TOKENS=11111111:tokenA,22222222:tokenA,33333333:tokenB,44444444:tokenC
+```
+(Accounts 11111111 and 22222222 share tokenA, others have unique tokens)
+
+## GitHub Actions Setup
+
+### Required Secrets
+
+Go to your repository → Settings → Secrets and variables → Actions
+
+| Secret Name | Description | Example |
+|------------|-------------|---------|
+| `QUESTRADE_TOKENS` | Comma-separated `accountId:token` pairs | `12345:token1,67890:token2` |
+| `LUNCHMONEY_API_TOKEN` | Lunch Money API access token | `lm_abc123...` |
+| `AWS_ACCESS_KEY_ID` | AWS IAM access key ID | `AKIAIOSFODNN7EXAMPLE` |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM secret access key | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+
+**Note:** After initial deployment, tokens are automatically managed in AWS Secrets Manager. The `QUESTRADE_TOKENS` GitHub secret is only used if you need to redeploy or add new accounts.
+
+## Example Setups
+
+### Example 1: Personal Accounts Only
+
+You have:
+- TFSA account: 12345678
+- RRSP account: 12345679
+- Both under one Questrade login with token: `xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0`
+
+**Configuration:**
+```
+QUESTRADE_TOKENS=12345678:xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0,12345679:xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0
+```
+
+### Example 2: Multiple Family Members
+
+You have:
+- Your TFSA: 11111111 (your login token: `tokenA`)
+- Your RRSP: 22222222 (your login token: `tokenA`)
+- Partner's TFSA: 33333333 (partner's login token: `tokenB`)
+- Partner's RRSP: 44444444 (partner's login token: `tokenB`)
+
+**Configuration:**
+```
+QUESTRADE_TOKENS=11111111:tokenA,22222222:tokenA,33333333:tokenB,44444444:tokenB
+```
+
+### Example 3: Many Accounts
+
+No limit on number of accounts! Just keep adding to the comma-separated list:
 
 ```
-QUESTRADE_REFRESH_TOKEN_PRIMARY=xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0
-QUESTRADE_REFRESH_TOKEN_SPOUSE=yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1
-QUESTRADE_ACCOUNT_IDS_PRIMARY=12345678,12345679
-QUESTRADE_ACCOUNT_IDS_SPOUSE=87654321
-LUNCHMONEY_API_TOKEN=your_lunchmoney_token_here
-AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+QUESTRADE_TOKENS=11111:t1,22222:t1,33333:t2,44444:t3,55555:t3,66666:t4
 ```
 
-## Secrets Manager Format
+## Adding More Accounts
 
-After first deployment, Secrets Manager will contain:
+To add a new account:
 
-**Secret Name**: `questrade-lunchmoney/questrade-tokens`
+1. **Get the account ID** from Questrade
+2. **Get the refresh token** (if it's a new login) or reuse an existing token
+3. **Update GitHub secret** `QUESTRADE_TOKENS`: append `,newAccountId:token`
+4. **Redeploy:**
+   ```bash
+   git commit --allow-empty -m "Add new account"
+   git push origin main
+   ```
 
-**Secret Value** (JSON):
-```json
-{
-  "primary": "xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0",
-  "spouse": "yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1"
-}
-```
+Or trigger manual deployment from GitHub Actions UI.
 
-This JSON is automatically maintained - both tokens update independently as they rotate.
+That's it! The new account will be synced on the next Lambda run.
+
+## Removing Accounts
+
+To remove an account:
+
+1. **Update GitHub secret** `QUESTRADE_TOKENS`: remove the `accountId:token` entry
+2. **Update Secrets Manager manually** (or redeploy):
+   ```bash
+   # Get current secret
+   aws secretsmanager get-secret-value \
+     --secret-id questrade-lunchmoney/questrade-tokens \
+     --query 'SecretString' --output text | jq
+
+   # Update to remove the account ID
+   aws secretsmanager put-secret-value \
+     --secret-id questrade-lunchmoney/questrade-tokens \
+     --secret-string '{"keep_this_account":"token",...}'
+   ```
 
 ## Monitoring
 
@@ -146,16 +211,18 @@ This JSON is automatically maintained - both tokens update independently as they
 
 Look for log entries like:
 ```
-Starting sync for 2 Questrade account group(s)
-Processing primary: 2 account(s)
-  Account primary:12345678: 5 new, 2 skipped
-  Account primary:12345679: 3 new, 1 skipped
-Processing spouse: 1 account(s)
-  Account spouse:87654321: 2 new, 0 skipped
-2 Questrade token(s) updated
+Starting sync for 3 Questrade account(s): 12345678, 12345679, 87654321
+Processing account 12345678
+  Account 12345678: 5 new, 2 skipped
+Processing account 12345679
+  Account 12345679: 3 new, 1 skipped
+Processing account 87654321
+  Account 87654321: 2 new, 0 skipped
+3 Questrade token(s) updated
 ✅ Successfully updated Questrade refresh tokens in Secrets Manager
-  - Updated token for: primary
-  - Updated token for: spouse
+  - Updated token for account: 12345678
+  - Updated token for account: 12345679
+  - Updated token for account: 87654321
 ```
 
 ### Lambda Response
@@ -166,68 +233,45 @@ Processing spouse: 1 account(s)
   "body": {
     "message": "Sync completed successfully",
     "results": {
-      "primary:12345678": {"new_transactions": 5, "skipped_duplicates": 2},
-      "primary:12345679": {"new_transactions": 3, "skipped_duplicates": 1},
-      "spouse:87654321": {"new_transactions": 2, "skipped_duplicates": 0}
+      "12345678": {"new_transactions": 5, "skipped_duplicates": 2},
+      "12345679": {"new_transactions": 3, "skipped_duplicates": 1},
+      "87654321": {"new_transactions": 2, "skipped_duplicates": 0}
     },
     "totals": {
       "new_transactions": 10,
       "skipped_duplicates": 3
     },
-    "accounts_processed": 2,
-    "tokens_rotated": 2,
+    "accounts_processed": 3,
+    "tokens_rotated": 3,
     "tokens_auto_updated": true
   }
 }
 ```
 
-## Adding More Accounts
-
-To add a third account (e.g., child's account):
-
-1. **Get new token** from child's Questrade account
-2. **Add GitHub secrets**:
-   - `QUESTRADE_REFRESH_TOKEN_CHILD`
-   - `QUESTRADE_ACCOUNT_IDS_CHILD`
-
-3. **Update workflow** (`.github/workflows/deploy.yml`):
-   ```yaml
-   TOKENS_JSON=$(jq -n \
-     --arg primary "${{ secrets.QUESTRADE_REFRESH_TOKEN_PRIMARY }}" \
-     --arg spouse "${{ secrets.QUESTRADE_REFRESH_TOKEN_SPOUSE }}" \
-     --arg child "${{ secrets.QUESTRADE_REFRESH_TOKEN_CHILD }}" \
-     '{primary: $primary, spouse: $spouse, child: $child}')
-
-   ACCOUNTS_JSON=$(jq -n \
-     --arg primary_ids "${{ secrets.QUESTRADE_ACCOUNT_IDS_PRIMARY }}" \
-     --arg spouse_ids "${{ secrets.QUESTRADE_ACCOUNT_IDS_SPOUSE }}" \
-     --arg child_ids "${{ secrets.QUESTRADE_ACCOUNT_IDS_CHILD }}" \
-     '{
-       primary: {account_ids: ($primary_ids | split(",")), token_key: "primary"},
-       spouse: {account_ids: ($spouse_ids | split(",")), token_key: "spouse"},
-       child: {account_ids: ($child_ids | split(",")), token_key: "child"}
-     }')
-   ```
-
-4. **Redeploy** - tokens will be added to Secrets Manager
-
 ## Troubleshooting
 
-### Only One Account Syncing
+### Only Some Accounts Syncing
 
-**Check**:
-- Both token secrets are set in GitHub
-- Both account ID secrets are set
-- Tokens are valid (not expired during initial setup)
+**Check:**
+- All account IDs are in the Secrets Manager JSON
+- Each account ID has a valid token
+- Tokens haven't expired during setup
+
+**View Secrets Manager:**
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id questrade-lunchmoney/questrade-tokens \
+  --query 'SecretString' --output text | jq
+```
 
 ### Tokens Not Updating
 
-**Check**:
+**Check:**
 - Secrets Manager permissions in Lambda role
 - CloudWatch logs for error messages
 - Secret name matches configuration
 
-### Account IDs Wrong
+### Wrong Account IDs
 
 **Verify** using Questrade API:
 ```bash
@@ -238,13 +282,22 @@ curl "https://login.questrade.com/oauth2/token?grant_type=refresh_token&refresh_
 curl "API_SERVER/v1/accounts" -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 
+### Deployment Fails
+
+If SAM deployment fails with "Parameter QuestradeAccounts does not exist":
+- You may be using an old deployment. Delete the stack and redeploy:
+```bash
+aws cloudformation delete-stack --stack-name questrade-lunchmoney-sync
+# Wait for deletion, then push to GitHub to redeploy
+```
+
 ## Best Practices
 
-✅ **Label accounts clearly** (`primary`, `spouse`, `child`) for easy identification
-✅ **Keep tokens separate** - one per Questrade login
-✅ **Monitor logs** after first run to verify both accounts sync
+✅ **Label clearly** - Use comments in your documentation to track which accounts belong to whom
+✅ **Keep tokens secure** - Never commit tokens to repository
+✅ **Monitor logs** after first run to verify all accounts sync
 ✅ **Test tokens** before adding to production
-✅ **Document** which account IDs belong to whom
+✅ **Document** which account IDs map to which accounts/people
 
 ## Security
 
@@ -256,4 +309,4 @@ curl "API_SERVER/v1/accounts" -H "Authorization: Bearer ACCESS_TOKEN"
 
 ## Cost
 
-Same as single account: ~$0.50/month for Secrets Manager, regardless of number of tokens stored.
+Same as single account: ~$0.50/month for Secrets Manager, regardless of number of accounts/tokens stored.

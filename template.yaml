@@ -30,11 +30,6 @@ Parameters:
     Description: Lunch Money API access token
     NoEcho: true
 
-  QuestradeAccounts:
-    Type: String
-    Description: JSON object mapping account labels to account IDs and token keys
-    Default: ""
-
   SyncDaysBack:
     Type: Number
     Description: Number of days to look back when syncing (max 31)
@@ -83,7 +78,6 @@ Globals:
     Environment:
       Variables:
         LUNCHMONEY_API_TOKEN: !Ref LunchMoneyApiToken
-        QUESTRADE_ACCOUNTS: !Ref QuestradeAccounts
         SYNC_DAYS_BACK: !Ref SyncDaysBack
         LUNCHMONEY_ASSET_ID: !Ref LunchMoneyAssetId
         QUESTRADE_SECRET_NAME: !Ref QuestradeSecretName

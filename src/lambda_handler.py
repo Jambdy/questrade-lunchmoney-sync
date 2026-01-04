@@ -89,25 +89,21 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     AWS Lambda handler function for syncing Questrade to Lunch Money.
 
     Environment Variables Required:
-        QUESTRADE_SECRET_NAME: Name of Secrets Manager secret for Questrade tokens (optional)
+        QUESTRADE_SECRET_NAME: Name of Secrets Manager secret for Questrade tokens
         USE_SECRETS_MANAGER: Whether to use Secrets Manager (default: 'true')
-        QUESTRADE_REFRESH_TOKEN: Questrade OAuth refresh token (fallback, can be JSON for multiple)
         LUNCHMONEY_API_TOKEN: Lunch Money API access token
-        QUESTRADE_ACCOUNTS: JSON mapping of account labels to account IDs
         SYNC_DAYS_BACK: Number of days to sync (default: 31, max: 31)
         LUNCHMONEY_ASSET_ID: Optional Lunch Money asset ID to associate transactions
 
-    QUESTRADE_ACCOUNTS format (JSON):
-        {
-          "primary": {"account_ids": ["123456"], "token_key": "primary"},
-          "spouse": {"account_ids": ["789012"], "token_key": "spouse"}
-        }
-
     Secrets Manager format (JSON):
         {
-          "primary": "refresh_token_for_primary_account",
-          "spouse": "refresh_token_for_spouse_account"
+          "12345": "refresh_token_for_account_12345",
+          "67890": "refresh_token_for_account_67890",
+          "11111": "refresh_token_for_account_11111"
         }
+
+    Account IDs are extracted directly from the Secrets Manager JSON keys.
+    Each key represents a Questrade account ID, and its value is the refresh token.
 
     Args:
         event: Lambda event object
@@ -121,53 +117,48 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         use_secrets_manager = os.environ.get('USE_SECRETS_MANAGER', 'true').lower() == 'true'
         secret_name = os.environ.get('QUESTRADE_SECRET_NAME', 'questrade-lunchmoney/questrade-tokens')
         lunchmoney_api_token = os.environ.get('LUNCHMONEY_API_TOKEN')
-        accounts_config_str = os.environ.get('QUESTRADE_ACCOUNTS', '')
         days_back = int(os.environ.get('SYNC_DAYS_BACK', '31'))
         asset_id_str = os.environ.get('LUNCHMONEY_ASSET_ID')
 
-        # Parse accounts configuration
-        try:
-            accounts_config = json.loads(accounts_config_str) if accounts_config_str else {}
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid QUESTRADE_ACCOUNTS JSON: {str(e)}")
-
-        # Get Questrade refresh tokens from Secrets Manager or environment variable
-        questrade_tokens = {}
+        # Get Questrade refresh tokens from Secrets Manager
+        # The JSON format is: {"account_id": "token", "account_id2": "token2", ...}
+        # Account IDs are extracted from the JSON keys
+        all_tokens = {}
         if use_secrets_manager:
-            logger.info(f"Retrieving Questrade refresh tokens from Secrets Manager: {secret_name}")
+            logger.info(f"Retrieving Questrade tokens from Secrets Manager: {secret_name}")
             tokens_json = get_secret(secret_name)
             if tokens_json:
                 try:
-                    questrade_tokens = json.loads(tokens_json)
-                    logger.info(f"Loaded {len(questrade_tokens)} Questrade tokens from Secrets Manager")
-                except json.JSONDecodeError:
-                    # Single token (backward compatibility)
-                    questrade_tokens = {"default": tokens_json}
-                    logger.info("Loaded single Questrade token from Secrets Manager")
-
-        # Fallback to environment variable if Secrets Manager not used or failed
-        if not questrade_tokens:
-            logger.info("Falling back to environment variable for Questrade refresh token")
+                    all_tokens = json.loads(tokens_json)
+                    logger.info(f"Loaded tokens for {len(all_tokens)} Questrade account(s) from Secrets Manager")
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON in Secrets Manager secret {secret_name}: {str(e)}")
+            else:
+                raise ValueError(f"Could not retrieve secret {secret_name} from Secrets Manager")
+        else:
+            # Fallback to environment variable if Secrets Manager not enabled
+            logger.info("Secrets Manager disabled, falling back to QUESTRADE_REFRESH_TOKEN environment variable")
             token_env = os.environ.get('QUESTRADE_REFRESH_TOKEN', '')
             if token_env:
                 try:
-                    questrade_tokens = json.loads(token_env)
-                except json.JSONDecodeError:
-                    # Single token
-                    questrade_tokens = {"default": token_env}
+                    all_tokens = json.loads(token_env)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON in QUESTRADE_REFRESH_TOKEN: {str(e)}")
+            else:
+                raise ValueError("QUESTRADE_REFRESH_TOKEN environment variable is required when Secrets Manager is disabled")
 
         # Validate required configuration
-        if not questrade_tokens:
-            raise ValueError("QUESTRADE_REFRESH_TOKEN not found in Secrets Manager or environment variables")
+        if not all_tokens:
+            raise ValueError("No Questrade tokens found in Secrets Manager or environment variables")
         if not lunchmoney_api_token:
             raise ValueError("LUNCHMONEY_API_TOKEN environment variable is required")
-        if not accounts_config:
-            raise ValueError("QUESTRADE_ACCOUNTS environment variable is required")
 
         # Parse asset ID if provided
         asset_id = int(asset_id_str) if asset_id_str else None
 
-        logger.info(f"Starting sync for {len(accounts_config)} Questrade account group(s)")
+        # Extract account IDs from the tokens dictionary keys
+        account_ids = list(all_tokens.keys())
+        logger.info(f"Starting sync for {len(account_ids)} Questrade account(s): {', '.join(account_ids)}")
         logger.info(f"Syncing last {days_back} days")
 
         # Initialize Lunch Money client (shared across all accounts)
@@ -179,24 +170,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         total_new = 0
         total_skipped = 0
 
-        # Process each account group
-        for account_label, account_info in accounts_config.items():
-            account_ids = account_info.get('account_ids', [])
-            token_key = account_info.get('token_key', account_label)
+        # Process each account individually
+        for account_id in account_ids:
+            refresh_token = all_tokens[account_id]
 
-            if not account_ids:
-                logger.warning(f"No account IDs specified for {account_label}, skipping")
-                continue
+            logger.info(f"Processing account {account_id}")
 
-            # Get the token for this account group
-            refresh_token = questrade_tokens.get(token_key)
-            if not refresh_token:
-                logger.error(f"No refresh token found for {account_label} (key: {token_key}), skipping")
-                continue
-
-            logger.info(f"Processing {account_label}: {len(account_ids)} account(s)")
-
-            # Initialize Questrade client for this account group
+            # Initialize Questrade client for this account
             questrade_client = QuestradeClient(refresh_token)
 
             # Initialize sync handler
@@ -206,23 +186,22 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 asset_id=asset_id
             )
 
-            # Perform sync for this account group
-            group_results = sync_handler.sync_multiple_accounts(
-                account_ids=account_ids,
+            # Perform sync for this single account
+            new_count, skipped_count = sync_handler.sync_account(
+                account_id=account_id,
                 days_back=days_back
             )
 
-            # Store results with account label prefix
-            for account_id, (new_count, skipped_count) in group_results.items():
-                all_results[f"{account_label}:{account_id}"] = (new_count, skipped_count)
-                total_new += new_count
-                total_skipped += skipped_count
+            # Store results
+            all_results[account_id] = (new_count, skipped_count)
+            total_new += new_count
+            total_skipped += skipped_count
 
             # Check if token was updated
             new_token = questrade_client.get_current_refresh_token()
             if new_token != refresh_token:
-                updated_tokens[token_key] = new_token
-                logger.info(f"Token updated for {account_label}")
+                updated_tokens[account_id] = new_token
+                logger.info(f"Token updated for account {account_id}")
 
         # Log results
         logger.info(f"Sync completed: {total_new} new transactions, {total_skipped} duplicates skipped")
@@ -237,7 +216,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # Automatically update Secrets Manager if enabled
             if use_secrets_manager:
                 # Merge updated tokens with existing tokens
-                merged_tokens = {**questrade_tokens, **updated_tokens}
+                merged_tokens = {**all_tokens, **updated_tokens}
                 tokens_json = json.dumps(merged_tokens)
 
                 logger.info(f"Updating Secrets Manager secret: {secret_name}")
@@ -245,13 +224,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
                 if tokens_updated:
                     logger.info("✅ Successfully updated Questrade refresh tokens in Secrets Manager")
-                    for token_key in updated_tokens.keys():
-                        logger.info(f"  - Updated token for: {token_key}")
+                    for account_id in updated_tokens.keys():
+                        logger.info(f"  - Updated token for account: {account_id}")
                 else:
                     logger.error("❌ Failed to update Questrade refresh tokens in Secrets Manager")
                     logger.warning("Manual update required for tokens:")
-                    for token_key, token_value in updated_tokens.items():
-                        logger.warning(f"  - {token_key}: {token_value[:10]}...")
+                    for account_id, token_value in updated_tokens.items():
+                        logger.warning(f"  - Account {account_id}: {token_value[:10]}...")
             else:
                 logger.warning("Secrets Manager not enabled.")
                 logger.warning("Please manually update your QUESTRADE_REFRESH_TOKEN with:")
@@ -272,7 +251,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'new_transactions': total_new,
                     'skipped_duplicates': total_skipped
                 },
-                'accounts_processed': len(accounts_config),
+                'accounts_processed': len(account_ids),
                 'tokens_rotated': len(updated_tokens),
                 'tokens_auto_updated': tokens_updated,
                 'using_secrets_manager': use_secrets_manager

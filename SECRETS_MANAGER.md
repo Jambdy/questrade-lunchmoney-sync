@@ -24,10 +24,13 @@ Questrade refresh tokens expire after 7 days. Manually updating them is tedious 
    - Go to your repo → Settings → Secrets and variables → Actions
    - Add these secrets:
      ```
-     QUESTRADE_REFRESH_TOKEN=xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0
+     QUESTRADE_TOKENS=12345678:xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0,87654321:yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1
      LUNCHMONEY_API_TOKEN=your_lunch_money_token
-     QUESTRADE_ACCOUNT_IDS=12345678,87654321
      ```
+
+   **Format:** `accountId:token,accountId:token,...`
+
+   See [MULTI_ACCOUNT_SETUP.md](MULTI_ACCOUNT_SETUP.md) for detailed instructions on the format.
 
 2. **Push to GitHub**:
    ```bash
@@ -35,10 +38,11 @@ Questrade refresh tokens expire after 7 days. Manually updating them is tedious 
    ```
 
 3. **GitHub Actions will**:
+   - Parse `QUESTRADE_TOKENS` into JSON format
    - Check if Secrets Manager secret exists
-   - If not, create it with your `QUESTRADE_REFRESH_TOKEN`
+   - If not, create it with the parsed JSON
    - Deploy the Lambda function
-   - Lambda will automatically update the secret on each run
+   - Lambda will automatically update tokens on each run
 
 4. **Done!** No manual token updates needed ever again.
 
@@ -47,22 +51,23 @@ Questrade refresh tokens expire after 7 days. Manually updating them is tedious 
 1. **Create the secret manually** (first time only):
    ```bash
    aws secretsmanager create-secret \
-     --name questrade-lunchmoney/questrade-token \
-     --secret-string "xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0" \
+     --name questrade-lunchmoney/questrade-tokens \
+     --secret-string '{"12345678":"xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0","87654321":"yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1"}' \
      --region us-east-1
    ```
+
+   **Format:** JSON with account IDs as keys and refresh tokens as values.
 
 2. **Deploy with SAM**:
    ```bash
    sam deploy \
      --parameter-overrides \
-       QuestradeRefreshToken="" \
+       QuestradeRefreshTokens="" \
        LunchMoneyApiToken="your_token" \
-       QuestradeAccountIds="12345678" \
        UseSecretsManager="true"
    ```
 
-   Note: Leave `QuestradeRefreshToken` empty since we're using Secrets Manager.
+   Note: Leave `QuestradeRefreshTokens` empty since we're using Secrets Manager.
 
 ## Configuration
 
@@ -73,9 +78,10 @@ The Lambda function uses these environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `USE_SECRETS_MANAGER` | `true` | Enable/disable Secrets Manager |
-| `QUESTRADE_SECRET_NAME` | `questrade-lunchmoney/questrade-token` | Secret name in Secrets Manager |
+| `QUESTRADE_SECRET_NAME` | `questrade-lunchmoney/questrade-tokens` | Secret name in Secrets Manager |
 | `LUNCHMONEY_API_TOKEN` | (required) | Lunch Money API token (doesn't rotate) |
-| `QUESTRADE_ACCOUNT_IDS` | (required) | Comma-separated account IDs |
+
+**Note:** Account IDs are automatically extracted from the Secrets Manager JSON keys.
 
 ### SAM Template Parameters
 

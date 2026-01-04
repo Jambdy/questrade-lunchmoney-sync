@@ -113,11 +113,10 @@ Add these as **Repository Secrets**:
 | `AWS_ACCESS_KEY_ID` | AWS IAM access key ID (if using Option A) | `AKIAIOSFODNN7EXAMPLE` |
 | `AWS_SECRET_ACCESS_KEY` | AWS IAM secret access key (if using Option A) | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
 | `AWS_ROLE_ARN` | AWS IAM role ARN (if using OIDC Option B) | `arn:aws:iam::123456789012:role/GitHubActionsRole` |
-| `QUESTRADE_REFRESH_TOKEN` | Questrade OAuth refresh token (initial only) ⚡ | `abc123xyz...` |
+| `QUESTRADE_TOKENS` | Comma-separated `accountId:token` pairs (initial only) ⚡ | `12345:token1,67890:token2` |
 | `LUNCHMONEY_API_TOKEN` | Lunch Money API access token | `lm_abc123...` |
-| `QUESTRADE_ACCOUNT_IDS` | Comma-separated Questrade account IDs | `12345678,87654321` |
 
-⚡ **Questrade Token Auto-Rotation**: The Questrade refresh token is only needed for the **initial deployment**. After that, it's automatically stored and rotated in AWS Secrets Manager. You'll never need to manually update it again! See [SECRETS_MANAGER.md](SECRETS_MANAGER.md) for details.
+⚡ **Questrade Token Auto-Rotation**: The `QUESTRADE_TOKENS` secret is only needed for the **initial deployment**. After that, tokens are automatically stored and rotated in AWS Secrets Manager. You'll never need to manually update them again! See [SECRETS_MANAGER.md](SECRETS_MANAGER.md) and [MULTI_ACCOUNT_SETUP.md](MULTI_ACCOUNT_SETUP.md) for details.
 
 **To add a secret:**
 1. Click "New repository secret"

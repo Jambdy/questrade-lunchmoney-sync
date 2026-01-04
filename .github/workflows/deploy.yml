@@ -79,12 +79,27 @@ jobs:
           SECRET_NAME="${{ vars.QUESTRADE_SECRET_NAME || 'questrade-lunchmoney/questrade-tokens' }}"
           echo "secret_name=${SECRET_NAME}" >> $GITHUB_OUTPUT
 
-          # Build JSON tokens object from individual secrets
-          # Format: {"primary": "token1", "spouse": "token2"}
-          TOKENS_JSON=$(jq -n \
-            --arg primary "${{ secrets.QUESTRADE_REFRESH_TOKEN_PRIMARY }}" \
-            --arg spouse "${{ secrets.QUESTRADE_REFRESH_TOKEN_SPOUSE }}" \
-            '{primary: $primary, spouse: $spouse}')
+          # Parse QUESTRADE_TOKENS from comma-separated format to JSON
+          # Input format: 12345:token1,67890:token2,11111:token3
+          # Output format: {"12345":"token1","67890":"token2","11111":"token3"}
+          TOKENS_CSV="${{ secrets.QUESTRADE_TOKENS }}"
+
+          if [ -n "$TOKENS_CSV" ]; then
+            TOKENS_JSON=$(echo "$TOKENS_CSV" | awk -F',' '
+              BEGIN { printf "{" }
+              {
+                for(i=1; i<=NF; i++) {
+                  split($i, parts, ":")
+                  printf "\"%s\":\"%s\"", parts[1], parts[2]
+                  if(i < NF) printf ","
+                }
+              }
+              END { printf "}" }
+            ')
+            echo "Parsed tokens for $(echo "$TOKENS_JSON" | jq 'keys | length') account(s)"
+          else
+            TOKENS_JSON=""
+          fi
 
           # Check if secret exists
           if aws secretsmanager describe-secret --secret-id "${SECRET_NAME}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
@@ -101,16 +116,6 @@ jobs:
 
       - name: Deploy SAM application
         run: |
-          # Build QUESTRADE_ACCOUNTS JSON
-          # Format: {"primary": {"account_ids": ["123"], "token_key": "primary"}, "spouse": {"account_ids": ["456"], "token_key": "spouse"}}
-          ACCOUNTS_JSON=$(jq -n \
-            --arg primary_ids "${{ secrets.QUESTRADE_ACCOUNT_IDS_PRIMARY }}" \
-            --arg spouse_ids "${{ secrets.QUESTRADE_ACCOUNT_IDS_SPOUSE }}" \
-            '{
-              primary: {account_ids: ($primary_ids | split(",")), token_key: "primary"},
-              spouse: {account_ids: ($spouse_ids | split(",")), token_key: "spouse"}
-            }')
-
           sam deploy \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
@@ -121,7 +126,6 @@ jobs:
             --parameter-overrides \
               QuestradeRefreshTokens="${{ steps.check-secret.outputs.pass_tokens }}" \
               LunchMoneyApiToken="${{ secrets.LUNCHMONEY_API_TOKEN }}" \
-              QuestradeAccounts="${ACCOUNTS_JSON}" \
               SyncDaysBack="${{ vars.SYNC_DAYS_BACK || '31' }}" \
               LunchMoneyAssetId="${{ vars.LUNCHMONEY_ASSET_ID || '' }}" \
               SyncSchedule="${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}" \
