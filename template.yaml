@@ -121,7 +121,7 @@ Resources:
                 - logs:CreateLogGroup
                 - logs:CreateLogStream
                 - logs:PutLogEvents
-              Resource: !GetAtt SyncFunctionLogGroup.Arn
+              Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/questrade-lunchmoney-sync:*"
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
