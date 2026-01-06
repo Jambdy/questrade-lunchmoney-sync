@@ -5,19 +5,6 @@ Description: >
 
   Serverless application to sync Questrade investment transactions to Lunch Money
 
-Metadata:
-  AWS::ServerlessRepo::Application:
-    Name: questrade-lunchmoney-sync
-    Description: Automated synchronization of investment transactions from Questrade to Lunch Money
-    Author: Your Name
-    SpdxLicenseId: MIT
-    LicenseUrl: LICENSE
-    ReadmeUrl: README.md
-    Labels: ['questrade', 'lunchmoney', 'finance', 'sync']
-    HomePageUrl: https://github.com/yourusername/questrade-lunchmoney-sync
-    SemanticVersion: 1.0.0
-    SourceCodeUrl: https://github.com/yourusername/questrade-lunchmoney-sync
-
 Parameters:
   QuestradeRefreshTokens:
     Type: String
