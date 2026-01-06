@@ -32,8 +32,8 @@ Parameters:
   SyncSchedule:
     Type: String
     Description: CloudWatch Events schedule expression (cron or rate)
-    Default: "cron(0 8 * * ? *)"
-    # Default: Daily at 8 AM UTC
+    Default: "cron(0 8 * * * *)"
+    # Default: Daily at 8 AM UTC (CloudWatch Events cron format)
 
   LogRetentionDays:
     Type: Number

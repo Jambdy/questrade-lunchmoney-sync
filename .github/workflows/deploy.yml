@@ -121,7 +121,7 @@ jobs:
             "QuestradeRefreshTokens=${{ steps.check-secret.outputs.pass_tokens }}"
             "LunchMoneyApiToken=${{ secrets.LUNCHMONEY_API_TOKEN }}"
             "SyncDaysBack=${{ vars.SYNC_DAYS_BACK || '31' }}"
-            "SyncSchedule=${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}"
+            "SyncSchedule=${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * * *)' }}"
             "LogRetentionDays=${{ vars.LOG_RETENTION_DAYS || '30' }}"
             "QuestradeSecretName=${{ steps.check-secret.outputs.secret_name }}"
             "UseSecretsManager=${{ vars.USE_SECRETS_MANAGER || 'true' }}"
