@@ -116,6 +116,20 @@ jobs:
 
       - name: Deploy SAM application
         run: |
+          # Build parameter overrides dynamically, excluding empty values
+          PARAMS="QuestradeRefreshTokens=\"${{ steps.check-secret.outputs.pass_tokens }}\""
+          PARAMS="$PARAMS LunchMoneyApiToken=\"${{ secrets.LUNCHMONEY_API_TOKEN }}\""
+          PARAMS="$PARAMS SyncDaysBack=\"${{ vars.SYNC_DAYS_BACK || '31' }}\""
+          PARAMS="$PARAMS SyncSchedule=\"${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}\""
+          PARAMS="$PARAMS LogRetentionDays=\"${{ vars.LOG_RETENTION_DAYS || '30' }}\""
+          PARAMS="$PARAMS QuestradeSecretName=\"${{ steps.check-secret.outputs.secret_name }}\""
+          PARAMS="$PARAMS UseSecretsManager=\"${{ vars.USE_SECRETS_MANAGER || 'true' }}\""
+
+          # Only add LunchMoneyAssetId if it has a value
+          if [ -n "${{ vars.LUNCHMONEY_ASSET_ID }}" ]; then
+            PARAMS="$PARAMS LunchMoneyAssetId=\"${{ vars.LUNCHMONEY_ASSET_ID }}\""
+          fi
+
           sam deploy \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
@@ -123,15 +137,7 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --capabilities CAPABILITY_IAM \
             --resolve-s3 \
-            --parameter-overrides \
-              QuestradeRefreshTokens="${{ steps.check-secret.outputs.pass_tokens }}" \
-              LunchMoneyApiToken="${{ secrets.LUNCHMONEY_API_TOKEN }}" \
-              SyncDaysBack="${{ vars.SYNC_DAYS_BACK || '31' }}" \
-              LunchMoneyAssetId="${{ vars.LUNCHMONEY_ASSET_ID || '' }}" \
-              SyncSchedule="${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}" \
-              LogRetentionDays="${{ vars.LOG_RETENTION_DAYS || '30' }}" \
-              QuestradeSecretName="${{ steps.check-secret.outputs.secret_name }}" \
-              UseSecretsManager="${{ vars.USE_SECRETS_MANAGER || 'true' }}"
+            --parameter-overrides $PARAMS
 
       - name: Get stack outputs
         id: stack-outputs
