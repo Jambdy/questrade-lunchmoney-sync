@@ -139,20 +139,20 @@ jobs:
 
       - name: Deploy SAM application
         run: |
-          # Build parameter overrides using ParameterKey=Value format for complex values
-          PARAMS=(
-            "QuestradeRefreshTokens=${{ steps.check-secret.outputs.pass_tokens }}"
-            "LunchMoneyApiToken=${{ secrets.LUNCHMONEY_API_TOKEN }}"
-            "SyncDaysBack=${{ vars.SYNC_DAYS_BACK || '31' }}"
-            "SyncSchedule=${{ vars.SYNC_SCHEDULE || 'cron(0 8 ? * * *)' }}"
-            "LogRetentionDays=${{ vars.LOG_RETENTION_DAYS || '30' }}"
-            "QuestradeSecretName=${{ steps.check-secret.outputs.secret_name }}"
-            "UseSecretsManager=${{ vars.USE_SECRETS_MANAGER || 'true' }}"
-          )
+          # Use samconfig.toml approach or individual parameter format
+          # Build parameters string carefully to avoid space-related issues
+
+          PARAM_OVERRIDES="QuestradeRefreshTokens=\"${{ steps.check-secret.outputs.pass_tokens }}\" "
+          PARAM_OVERRIDES+="LunchMoneyApiToken=\"${{ secrets.LUNCHMONEY_API_TOKEN }}\" "
+          PARAM_OVERRIDES+="SyncDaysBack=\"${{ vars.SYNC_DAYS_BACK || '31' }}\" "
+          PARAM_OVERRIDES+="SyncSchedule=\"${{ vars.SYNC_SCHEDULE || 'rate(1 day)' }}\" "
+          PARAM_OVERRIDES+="LogRetentionDays=\"${{ vars.LOG_RETENTION_DAYS || '30' }}\" "
+          PARAM_OVERRIDES+="QuestradeSecretName=\"${{ steps.check-secret.outputs.secret_name }}\" "
+          PARAM_OVERRIDES+="UseSecretsManager=\"${{ vars.USE_SECRETS_MANAGER || 'true' }}\" "
 
           # Only add LunchMoneyAssetId if it has a value
           if [ -n "${{ vars.LUNCHMONEY_ASSET_ID }}" ]; then
-            PARAMS+=("LunchMoneyAssetId=${{ vars.LUNCHMONEY_ASSET_ID }}")
+            PARAM_OVERRIDES+="LunchMoneyAssetId=\"${{ vars.LUNCHMONEY_ASSET_ID }}\" "
           fi
 
           sam deploy \
@@ -162,7 +162,7 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --capabilities CAPABILITY_IAM \
             --resolve-s3 \
-            --parameter-overrides "${PARAMS[@]}"
+            --parameter-overrides $PARAM_OVERRIDES
 
       - name: Get stack outputs
         id: stack-outputs
