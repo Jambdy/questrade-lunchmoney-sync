@@ -162,7 +162,7 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --capabilities CAPABILITY_IAM \
             --resolve-s3 \
-            --parameter-overrides $PARAM_OVERRIDES
+            --parameter-overrides "$PARAM_OVERRIDES"
 
       - name: Get stack outputs
         id: stack-outputs
