@@ -43,8 +43,8 @@ Parameters:
 
   QuestradeSecretName:
     Type: String
-    Description: Name for the Secrets Manager secret storing Questrade tokens
-    Default: "questrade-lunchmoney/questrade-tokens"
+    Description: Name for the Secrets Manager secret storing Questrade account configurations
+    Default: "questrade-lunchmoney/account-configs"
 
   UseSecretsManager:
     Type: String
@@ -71,13 +71,13 @@ Globals:
         USE_SECRETS_MANAGER: !Ref UseSecretsManager
 
 Resources:
-  # Secrets Manager secret for Questrade refresh tokens (JSON object)
+  # Secrets Manager secret for Questrade account configurations (JSON object with account details)
   QuestradeTokenSecret:
     Type: AWS::SecretsManager::Secret
     Condition: CreateSecret
     Properties:
       Name: !Ref QuestradeSecretName
-      Description: Questrade OAuth refresh tokens (JSON, auto-rotates with each API call)
+      Description: Questrade account configurations with tokens and Lunch Money asset mappings (auto-rotates tokens with each API call)
       SecretString: !Ref QuestradeRefreshTokens
       Tags:
         - Key: Application

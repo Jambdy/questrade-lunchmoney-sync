@@ -1,73 +1,89 @@
 # AWS Secrets Manager Integration
 
-This application uses AWS Secrets Manager to automatically manage and rotate the Questrade refresh token, eliminating the need for manual updates every 7 days.
+This application uses AWS Secrets Manager to automatically manage and rotate Questrade refresh tokens for multiple accounts, eliminating the need for manual updates every 7 days.
 
 ## How It Works
 
 ### The Problem
-Questrade refresh tokens expire after 7 days. Manually updating them is tedious and error-prone.
+- Questrade refresh tokens expire after 7 days
+- Managing multiple Questrade accounts requires tracking multiple tokens
+- Each account needs to be linked to a specific Lunch Money asset
+- Manually updating this configuration is tedious and error-prone
 
 ### The Solution
-1. **Initial Setup**: Store the Questrade refresh token in AWS Secrets Manager
+1. **Initial Setup**: Store all Questrade account configurations in a single AWS Secrets Manager secret
 2. **Each Lambda Run**:
-   - Read the current token from Secrets Manager
-   - Use it to authenticate with Questrade
-   - Questrade returns a new refresh token (extends validity by 7 days)
-   - Automatically update Secrets Manager with the new token
-3. **Result**: As long as the Lambda runs at least once every 7 days, the token never expires!
+   - Read the current account configurations from Secrets Manager
+   - For each account:
+     - Use the refresh token to authenticate with Questrade
+     - Look up the corresponding Lunch Money asset by name
+     - Sync transactions to the correct asset
+     - Questrade returns a new refresh token (extends validity by 7 days)
+   - Automatically update Secrets Manager with all new tokens
+3. **Result**: As long as the Lambda runs at least once every 7 days, tokens never expire!
 
 ## Setup Instructions
 
-### Option 1: Using GitHub Actions (Recommended)
+### Option 1: Using the Setup Script (Recommended)
 
-1. **Add GitHub Secrets**:
-   - Go to your repo → Settings → Secrets and variables → Actions
-   - Add these secrets:
-     ```
-     QUESTRADE_TOKENS=12345678:xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0,87654321:yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1
-     LUNCHMONEY_API_TOKEN=your_lunch_money_token
-     ```
+1. **Ensure Lunch Money Assets Exist**:
+   - Log into Lunch Money
+   - Create manual assets (Settings → Assets → Add Asset → Manual)
+   - Name them exactly:
+     - `Questrade - James - RRSP`
+     - `Questrade - Christine - RRSP`
 
-   **Format:** `accountId:token,accountId:token,...`
-
-   See [MULTI_ACCOUNT_SETUP.md](MULTI_ACCOUNT_SETUP.md) for detailed instructions on the format.
-
-2. **Push to GitHub**:
+2. **Run the setup script**:
    ```bash
-   git push origin master
+   ./scripts/create-secret.sh
    ```
 
-3. **GitHub Actions will**:
-   - Parse `QUESTRADE_TOKENS` into JSON format
-   - Check if Secrets Manager secret exists
-   - If not, create it with the parsed JSON
-   - Deploy the Lambda function
-   - Lambda will automatically update tokens on each run
+   This will create or update the AWS Secrets Manager secret with your account configurations.
 
-4. **Done!** No manual token updates needed ever again.
-
-### Option 2: Manual SAM Deployment
-
-1. **Create the secret manually** (first time only):
-   ```bash
-   aws secretsmanager create-secret \
-     --name questrade-lunchmoney/questrade-tokens \
-     --secret-string '{"12345678":"xazTpGC-BOEvm7KhhG0oIvi-ROHdKAgs0","87654321":"yBDuQHD-CPFwn8LiiH1pJwj-SPIeLBht1"}' \
-     --region us-east-1
-   ```
-
-   **Format:** JSON with account IDs as keys and refresh tokens as values.
-
-2. **Deploy with SAM**:
+3. **Deploy with SAM**:
    ```bash
    sam deploy \
      --parameter-overrides \
        QuestradeRefreshTokens="" \
-       LunchMoneyApiToken="your_token" \
+       LunchMoneyApiToken="your_lunchmoney_api_token" \
        UseSecretsManager="true"
    ```
 
    Note: Leave `QuestradeRefreshTokens` empty since we're using Secrets Manager.
+
+4. **Done!** No manual token updates needed ever again.
+
+### Option 2: Manual AWS CLI Setup
+
+1. **Ensure Lunch Money Assets Exist** (as above)
+
+2. **Create the secret manually**:
+   ```bash
+   aws secretsmanager create-secret \
+     --name questrade-lunchmoney/account-configs \
+     --secret-string '{
+       "accounts": [
+         {
+           "questrade_account_id": "53219675",
+           "questrade_refresh_token": "d6TLCxGgMzGIza6q-W3wCDzL4Ybah0oH0",
+           "lunchmoney_asset_name": "Questrade - James - RRSP"
+         },
+         {
+           "questrade_account_id": "53230366",
+           "questrade_refresh_token": "nqU9H1lPMU_D2EHtCPlemEpPwLg8UK-i0",
+           "lunchmoney_asset_name": "Questrade - Christine - RRSP"
+         }
+       ]
+     }' \
+     --region us-east-1
+   ```
+
+   **Format:** JSON with an `accounts` array, where each account has:
+   - `questrade_account_id`: Your Questrade account number
+   - `questrade_refresh_token`: OAuth refresh token from Questrade
+   - `lunchmoney_asset_name`: Exact name of the asset in Lunch Money
+
+3. **Deploy with SAM** (as above)
 
 ## Configuration
 
@@ -78,17 +94,18 @@ The Lambda function uses these environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `USE_SECRETS_MANAGER` | `true` | Enable/disable Secrets Manager |
-| `QUESTRADE_SECRET_NAME` | `questrade-lunchmoney/questrade-tokens` | Secret name in Secrets Manager |
+| `QUESTRADE_SECRET_NAME` | `questrade-lunchmoney/account-configs` | Secret name in Secrets Manager |
 | `LUNCHMONEY_API_TOKEN` | (required) | Lunch Money API token (doesn't rotate) |
+| `SYNC_DAYS_BACK` | `31` | Number of days to sync (max 31) |
 
-**Note:** Account IDs are automatically extracted from the Secrets Manager JSON keys.
+**Note:** Account configurations (including tokens and asset mappings) are stored in Secrets Manager.
 
 ### SAM Template Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `QuestradeRefreshToken` | `""` | Initial token (only for first deployment) |
-| `QuestradeSecretName` | `questrade-lunchmoney/questrade-token` | Secret name |
+| `QuestradeRefreshTokens` | `""` | Initial account configs JSON (only for first deployment) |
+| `QuestradeSecretName` | `questrade-lunchmoney/account-configs` | Secret name |
 | `UseSecretsManager` | `true` | Enable Secrets Manager |
 
 ## Token Lifecycle
@@ -117,16 +134,16 @@ Look for log messages:
 - ✅ `Successfully updated Questrade refresh token in Secrets Manager`
 - ❌ `Failed to update Questrade refresh token in Secrets Manager`
 
-### Check Current Token
+### Check Current Configuration
 
-View the current token in Secrets Manager:
+View the current account configurations in Secrets Manager:
 
 ```bash
 aws secretsmanager get-secret-value \
-  --secret-id questrade-lunchmoney/questrade-token \
+  --secret-id questrade-lunchmoney/account-configs \
   --region us-east-1 \
   --query 'SecretString' \
-  --output text
+  --output text | jq .
 ```
 
 ### Lambda Response
@@ -138,9 +155,14 @@ When Lambda runs successfully, the response includes:
   "statusCode": 200,
   "body": {
     "message": "Sync completed successfully",
-    "token_rotated": true,
-    "token_auto_updated": true,
-    "using_secrets_manager": true
+    "accounts_processed": 2,
+    "tokens_rotated": 2,
+    "configs_auto_updated": true,
+    "using_secrets_manager": true,
+    "totals": {
+      "new_transactions": 15,
+      "skipped_duplicates": 3
+    }
   }
 }
 ```
@@ -156,8 +178,8 @@ When Lambda runs successfully, the response includes:
 If you prefer not to use Secrets Manager:
 
 1. Set `USE_SECRETS_MANAGER=false` in your deployment
-2. Set `QUESTRADE_REFRESH_TOKEN` as an environment variable
-3. Manually update the token every 7 days
+2. Set `QUESTRADE_ACCOUNT_CONFIGS` as an environment variable with the JSON configuration
+3. Manually update the tokens every 7 days
 
 ## Troubleshooting
 
@@ -185,7 +207,7 @@ The SAM template automatically adds these permissions.
 **Cause**: The secret doesn't exist in Secrets Manager.
 
 **Solutions**:
-1. **GitHub Actions**: Add `QUESTRADE_REFRESH_TOKEN` secret and redeploy
+1. Run `./scripts/create-secret.sh` to create the secret
 2. **Manual**: Create the secret manually (see Setup instructions)
 
 ### Token Not Updating
@@ -210,19 +232,29 @@ The SAM template automatically adds these permissions.
 - Disable Secrets Manager without a good reason
 - Skip monitoring logs
 
+### Error: "Lunch Money asset not found"
+
+**Cause**: The asset name in the configuration doesn't match any asset in Lunch Money.
+
+**Solutions**:
+1. Check the exact asset name in Lunch Money (case-sensitive)
+2. Create the asset in Lunch Money if it doesn't exist
+3. Update the secret with the correct asset name:
+   ```bash
+   ./scripts/create-secret.sh
+   ```
+
 ## Migration from Environment Variables
 
 If you're currently using environment variables:
 
-1. **Get your current token** from the Lambda environment variables
-2. **Create the secret**:
+1. **Get your current configuration** from the Lambda environment variables
+2. **Create the secret** with the new format:
    ```bash
-   aws secretsmanager create-secret \
-     --name questrade-lunchmoney/questrade-token \
-     --secret-string "YOUR_CURRENT_TOKEN"
+   ./scripts/create-secret.sh
    ```
 3. **Update deployment** to use Secrets Manager (set `USE_SECRETS_MANAGER=true`)
-4. **Remove** `QUESTRADE_REFRESH_TOKEN` environment variable (optional, acts as fallback)
+4. **Remove** old environment variables (optional, acts as fallback)
 
 ## Additional Resources
 
