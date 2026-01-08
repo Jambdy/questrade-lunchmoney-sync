@@ -202,17 +202,22 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             )
 
             # Perform sync for this single account
-            new_count, skipped_count = sync_handler.sync_account(
-                account_id=questrade_account_id,
-                days_back=days_back
-            )
+            try:
+                new_count, skipped_count = sync_handler.sync_account(
+                    account_id=questrade_account_id,
+                    days_back=days_back
+                )
 
-            # Store results
-            all_results[questrade_account_id] = (new_count, skipped_count)
-            total_new += new_count
-            total_skipped += skipped_count
+                # Store results
+                all_results[questrade_account_id] = (new_count, skipped_count)
+                total_new += new_count
+                total_skipped += skipped_count
+            except Exception as sync_error:
+                logger.error(f"Sync failed for account {questrade_account_id}: {sync_error}")
+                all_results[questrade_account_id] = (0, 0)
+                # Continue to save token even if sync failed
 
-            # Check if token was updated
+            # Check if token was updated (do this even if sync failed)
             new_token = questrade_client.get_current_refresh_token()
             if new_token != refresh_token:
                 logger.info(f"Token updated for account {questrade_account_id}")
