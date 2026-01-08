@@ -126,3 +126,21 @@ class LunchMoneyClient:
             if asset.get('name', '').lower() == name.lower():
                 return asset
         return None
+
+    def update_asset_balance(self, asset_id: int, balance: float, currency: str = 'cad') -> Dict:
+        """
+        Update an asset's balance.
+
+        Args:
+            asset_id: Lunch Money asset ID
+            balance: New balance amount
+            currency: Currency code (default: 'cad')
+
+        Returns:
+            Response from API
+        """
+        payload = {
+            'balance': str(balance),
+            'currency': currency
+        }
+        return self._make_request('PUT', f'/assets/{asset_id}', data=payload)

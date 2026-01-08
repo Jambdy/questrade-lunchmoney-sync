@@ -6,7 +6,6 @@ import boto3
 from botocore.exceptions import ClientError
 from .questrade import QuestradeClient
 from .lunchmoney import LunchMoneyClient
-from .sync import TransactionSync
 
 # Configure logging
 logger = logging.getLogger()
@@ -120,7 +119,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         use_secrets_manager = os.environ.get('USE_SECRETS_MANAGER', 'true').lower() == 'true'
         secret_name = os.environ.get('QUESTRADE_SECRET_NAME', 'questrade-lunchmoney/account-configs')
         lunchmoney_api_token = os.environ.get('LUNCHMONEY_API_TOKEN')
-        days_back = int(os.environ.get('SYNC_DAYS_BACK', '31'))
 
         # Get account configurations from Secrets Manager
         account_configs = []
@@ -155,8 +153,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not lunchmoney_api_token:
             raise ValueError("LUNCHMONEY_API_TOKEN environment variable is required")
 
-        logger.info(f"Starting sync for {len(account_configs)} Questrade account(s)")
-        logger.info(f"Syncing last {days_back} days")
+        logger.info(f"Starting balance sync for {len(account_configs)} Questrade account(s)")
 
         # Initialize Lunch Money client (shared across all accounts)
         lunchmoney_client = LunchMoneyClient(lunchmoney_api_token)
@@ -194,27 +191,28 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # Initialize Questrade client for this account
             questrade_client = QuestradeClient(refresh_token)
 
-            # Initialize sync handler
-            sync_handler = TransactionSync(
-                questrade_client=questrade_client,
-                lunchmoney_client=lunchmoney_client,
-                asset_id=asset_id
-            )
-
-            # Perform sync for this single account
+            # Fetch account balance from Questrade
             try:
-                new_count, skipped_count = sync_handler.sync_account(
-                    account_id=questrade_account_id,
-                    days_back=days_back
+                logger.info(f"Fetching balance for Questrade account {questrade_account_id}")
+                balances = questrade_client.get_account_balances(questrade_account_id)
+                total_equity = balances.get('totalEquity', 0)
+
+                logger.info(f"Questrade account {questrade_account_id} balance: ${total_equity:,.2f} CAD")
+
+                # Update Lunch Money asset balance
+                logger.info(f"Updating Lunch Money asset {asset_id} ({lunchmoney_asset_name})")
+                lunchmoney_client.update_asset_balance(
+                    asset_id=asset_id,
+                    balance=total_equity,
+                    currency='cad'
                 )
 
-                # Store results
-                all_results[questrade_account_id] = (new_count, skipped_count)
-                total_new += new_count
-                total_skipped += skipped_count
+                logger.info(f"✅ Successfully updated balance for {lunchmoney_asset_name}")
+                all_results[questrade_account_id] = (total_equity, True)
+                total_new += 1  # Count as successful update
             except Exception as sync_error:
-                logger.error(f"Sync failed for account {questrade_account_id}: {sync_error}")
-                all_results[questrade_account_id] = (0, 0)
+                logger.error(f"Balance update failed for account {questrade_account_id}: {sync_error}")
+                all_results[questrade_account_id] = (0, False)
                 # Continue to save token even if sync failed
 
             # Check if token was updated (do this even if sync failed)
@@ -232,9 +230,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 updated_configs.append(account_config)
 
         # Log results
-        logger.info(f"Sync completed: {total_new} new transactions, {total_skipped} duplicates skipped")
-        for account_id, (new_count, skipped_count) in all_results.items():
-            logger.info(f"  Account {account_id}: {new_count} new, {skipped_count} skipped")
+        logger.info(f"Balance sync completed: {total_new} account(s) updated successfully")
+        for account_id, (balance, success) in all_results.items():
+            status = "✅ Updated" if success else "❌ Failed"
+            logger.info(f"  Account {account_id}: {status} - Balance: ${balance:,.2f}")
 
         # Update account configurations if any tokens changed
         configs_updated = False
@@ -273,17 +272,17 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return {
             'statusCode': 200,
             'body': {
-                'message': 'Sync completed successfully',
+                'message': 'Balance sync completed successfully',
                 'results': {
                     account_id: {
-                        'new_transactions': new_count,
-                        'skipped_duplicates': skipped_count
+                        'balance': balance,
+                        'updated': success
                     }
-                    for account_id, (new_count, skipped_count) in all_results.items()
+                    for account_id, (balance, success) in all_results.items()
                 },
                 'totals': {
-                    'new_transactions': total_new,
-                    'skipped_duplicates': total_skipped
+                    'accounts_updated': total_new,
+                    'accounts_failed': len(all_results) - total_new
                 },
                 'accounts_processed': len(account_configs),
                 'tokens_rotated': tokens_changed,

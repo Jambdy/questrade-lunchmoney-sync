@@ -61,6 +61,19 @@ class QuestradeClient:
         data = self._make_request('/v1/accounts')
         return data.get('accounts', [])
 
+    def get_account_balances(self, account_id: str) -> Dict:
+        """
+        Get balance information for a specific account.
+
+        Args:
+            account_id: The account ID to fetch balances for
+
+        Returns:
+            Dictionary with balance information including totalEquity, cash, etc.
+        """
+        data = self._make_request(f'/v1/accounts/{account_id}/balances')
+        return data.get('combinedBalances', [{}])[0] if data.get('combinedBalances') else {}
+
     def get_account_activities(
         self,
         account_id: str,
