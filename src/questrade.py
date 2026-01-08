@@ -16,9 +16,13 @@ class QuestradeClient:
 
     def _refresh_access_token(self) -> None:
         """Refresh the access token using the refresh token."""
-        url = f"https://login.questrade.com/oauth2/token?grant_type=refresh_token&refresh_token={self.refresh_token}"
+        url = "https://login.questrade.com/oauth2/token"
+        params = {
+            'grant_type': 'refresh_token',
+            'refresh_token': self.refresh_token
+        }
 
-        response = requests.get(url)
+        response = requests.post(url, params=params)
         response.raise_for_status()
 
         data = response.json()
