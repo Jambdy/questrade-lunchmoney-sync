@@ -43,7 +43,10 @@ class QuestradeClient:
         """Make an authenticated request to the Questrade API."""
         self._ensure_valid_token()
 
-        url = f"{self.api_server}{endpoint}"
+        # Remove trailing slash from api_server and leading slash from endpoint to avoid double slashes
+        api_server = self.api_server.rstrip('/')
+        endpoint = endpoint.lstrip('/')
+        url = f"{api_server}/{endpoint}"
         headers = {
             'Authorization': f'Bearer {self.access_token}'
         }
