@@ -89,8 +89,8 @@ class QuestradeClient:
             current_end = min(current_start + timedelta(days=31), end_date)
 
             params = {
-                'startTime': current_start.replace(tzinfo=timezone.utc).isoformat(),
-                'endTime': current_end.replace(tzinfo=timezone.utc).isoformat()
+                'startTime': current_start.replace(microsecond=0, tzinfo=timezone.utc).isoformat(),
+                'endTime': current_end.replace(microsecond=0, tzinfo=timezone.utc).isoformat()
             }
 
             data = self._make_request(f'/v1/accounts/{account_id}/activities', params)
