@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 
@@ -89,8 +89,8 @@ class QuestradeClient:
             current_end = min(current_start + timedelta(days=31), end_date)
 
             params = {
-                'startTime': current_start.strftime('%Y-%m-%dT%H:%M:%S-05:00'),
-                'endTime': current_end.strftime('%Y-%m-%dT%H:%M:%S-05:00')
+                'startTime': current_start.replace(tzinfo=timezone.utc).isoformat(),
+                'endTime': current_end.replace(tzinfo=timezone.utc).isoformat()
             }
 
             data = self._make_request(f'/v1/accounts/{account_id}/activities', params)
