@@ -65,12 +65,12 @@ This application uses AWS Secrets Manager to automatically manage and rotate Que
        "accounts": [
          {
            "questrade_account_id": "53219675",
-           "questrade_refresh_token": "d6TLCxGgMzGIza6q-W3wCDzL4Ybah0oH0",
+           "questrade_refresh_token": "YOUR_REFRESH_TOKEN",
            "lunchmoney_asset_name": "Questrade - James - RRSP"
          },
          {
            "questrade_account_id": "53230366",
-           "questrade_refresh_token": "nqU9H1lPMU_D2EHtCPlemEpPwLg8UK-i0",
+           "questrade_refresh_token": "YOUR_REFRESH_TOKEN",
            "lunchmoney_asset_name": "Questrade - Christine - RRSP"
          }
        ]
