@@ -73,21 +73,14 @@ jobs:
       - name: Build SAM application
         run: sam build --use-container
 
-      - name: Check Secrets Manager secret
-        id: check-secret
+      - name: Check SSM parameter exists
         run: |
-          SECRET_NAME="${{ vars.QUESTRADE_SECRET_NAME || 'questrade-lunchmoney/account-configs' }}"
-          echo "secret_name=${SECRET_NAME}" >> $GITHUB_OUTPUT
-
-          # Check if secret exists
-          if aws secretsmanager describe-secret --secret-id "${SECRET_NAME}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
-            echo "Secret ${SECRET_NAME} already exists"
-            echo "secret_exists=true" >> $GITHUB_OUTPUT
+          PARAM_NAME="${{ vars.QUESTRADE_PARAMETER_NAME || '/questrade-lunchmoney/account-configs' }}"
+          if aws ssm get-parameter --name "${PARAM_NAME}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "SSM parameter ${PARAM_NAME} exists"
           else
-            echo "⚠️  Secret ${SECRET_NAME} does not exist!"
-            echo "Please create it manually using AWS CLI before deploying."
-            echo "See SECRETS_MANAGER.md for instructions."
-            echo "secret_exists=false" >> $GITHUB_OUTPUT
+            echo "SSM parameter ${PARAM_NAME} does not exist!"
+            echo "Create it with: aws ssm put-parameter --name '${PARAM_NAME}' --value '<json>' --type SecureString"
             exit 1
           fi
 
@@ -116,21 +109,11 @@ jobs:
 
       - name: Deploy SAM application
         run: |
-          # Build parameters string for SAM deployment
-          # Note: QuestradeRefreshTokens is left empty since secret already exists in AWS
-
-          PARAM_OVERRIDES="QuestradeRefreshTokens=\"\" "
-          PARAM_OVERRIDES+="LunchMoneyApiToken=\"${{ secrets.LUNCHMONEY_API_TOKEN }}\" "
+          PARAM_OVERRIDES="LunchMoneyApiToken=\"${{ secrets.LUNCHMONEY_API_TOKEN }}\" "
           PARAM_OVERRIDES+="SyncDaysBack=\"${{ vars.SYNC_DAYS_BACK || '31' }}\" "
           PARAM_OVERRIDES+="SyncSchedule=\"${{ vars.SYNC_SCHEDULE || 'rate(1 day)' }}\" "
           PARAM_OVERRIDES+="LogRetentionDays=\"${{ vars.LOG_RETENTION_DAYS || '30' }}\" "
-          PARAM_OVERRIDES+="QuestradeSecretName=\"${{ steps.check-secret.outputs.secret_name }}\" "
-          PARAM_OVERRIDES+="UseSecretsManager=\"${{ vars.USE_SECRETS_MANAGER || 'true' }}\" "
-
-          # Only add LunchMoneyAssetId if it has a value
-          if [ -n "${{ vars.LUNCHMONEY_ASSET_ID }}" ]; then
-            PARAM_OVERRIDES+="LunchMoneyAssetId=\"${{ vars.LUNCHMONEY_ASSET_ID }}\" "
-          fi
+          PARAM_OVERRIDES+="QuestradeParameterName=\"${{ vars.QUESTRADE_PARAMETER_NAME || '/questrade-lunchmoney/account-configs' }}\" "
 
           sam deploy \
             --no-confirm-changeset \
@@ -172,39 +155,34 @@ jobs:
 
           cat /tmp/response.json
 
-          # Check if invocation was successful
           if grep -q '"statusCode": 200' /tmp/response.json; then
-            echo "✅ Lambda test passed"
+            echo "Lambda test passed"
           else
-            echo "❌ Lambda test failed"
+            echo "Lambda test failed"
             exit 1
           fi
 
       - name: Deployment summary
         run: |
-          echo "## Deployment Summary 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Stack Name**: ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Function ARN**: ${{ steps.stack-outputs.outputs.function_arn }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **SNS Topic**: ${{ steps.stack-outputs.outputs.sns_topic }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: ${{ github.event.inputs.environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Configuration" >> $GITHUB_STEP_SUMMARY
           echo "- Sync Schedule: \`${{ vars.SYNC_SCHEDULE || 'cron(0 8 * * ? *)' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Sync Days Back: ${{ vars.SYNC_DAYS_BACK || '31' }}" >> $GITHUB_STEP_SUMMARY
           echo "- Log Retention: ${{ vars.LOG_RETENTION_DAYS || '30' }} days" >> $GITHUB_STEP_SUMMARY
-          echo "- Using Secrets Manager: ${{ vars.USE_SECRETS_MANAGER || 'true' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Secret Name: \`${{ steps.check-secret.outputs.secret_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- SSM Parameter: \`${{ vars.QUESTRADE_PARAMETER_NAME || '/questrade-lunchmoney/account-configs' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Token Management" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Questrade refresh token will auto-update in Secrets Manager on each run" >> $GITHUB_STEP_SUMMARY
-          echo "✅ No manual token rotation required" >> $GITHUB_STEP_SUMMARY
+          echo "Questrade refresh tokens auto-update in SSM Parameter Store on each run" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
         if: failure()
         run: |
-          echo "❌ Deployment failed! Check the logs above for details."
-          echo "## Deployment Failed ❌" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Deployment failed! Check the logs above for details."
+          echo "## Deployment Failed" >> $GITHUB_STEP_SUMMARY
           echo "The deployment to ${{ env.STACK_NAME }} failed. Please check the workflow logs." >> $GITHUB_STEP_SUMMARY
